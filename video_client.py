@@ -3,10 +3,10 @@ from PIL import Image, ImageTk
 # video_client.py
 import cv2
 import socket
-import pickle
 import struct
 import numpy as np
 import threading
+from time import time
 
 class VideoClient:
     def __init__(self):
@@ -21,69 +21,59 @@ class VideoClient:
             self.disconnect()
             
         try:
-            print(f"Connecting to camera on {host}...")
             self.current_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.current_socket.settimeout(self.connection_timeout)
             self.current_socket.connect((host, port))
             self.current_socket.settimeout(None)
+            self.current_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             self.running = True
             threading.Thread(target=self.receive_video, daemon=True).start()
-            print("Connected to camera server")
             return True
-        except socket.timeout:
-            print(f"Connection to {host} timed out")
-            self.disconnect()
-            return False
         except Exception as e:
-            print(f"Failed to connect to camera on {host}: {e}")
+            print(f"Connection failed: {e}")
             self.disconnect()
             return False
         
     def receive_video(self):
-        data = b""
-        payload_size = struct.calcsize("Q")
-        
-        while self.running:
-            try:
-                while len(data) < payload_size:
-                    packet = self.current_socket.recv(4*1024)
-                    if not packet:
-                        print("No data received")
-                        return
-                    data += packet
-                    
-                packed_msg_size = data[:payload_size]
-                data = data[payload_size:]
-                msg_size = struct.unpack("Q", packed_msg_size)[0]
+        try:
+            while self.running:
+                # Get frame size
+                size_data = self._recv_exactly(struct.calcsize("Q"))
+                if not size_data:
+                    break
+                frame_size = struct.unpack("Q", size_data)[0]
                 
-                while len(data) < msg_size:
-                    data += self.current_socket.recv(4*1024)
+                # Get frame data
+                frame_data = self._recv_exactly(frame_size)
+                if not frame_data:
+                    break
                     
-                frame_data = data[:msg_size]
-                data = data[msg_size:]
-                
-                # Decompress JPEG frame
-                frame_buffer = pickle.loads(frame_data)
-                frame = cv2.imdecode(np.frombuffer(frame_buffer, np.uint8), cv2.IMREAD_COLOR)
+                # Decode frame
+                frame = cv2.imdecode(np.frombuffer(frame_data, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if frame is not None:
                     self.current_frame = frame
                     self.frame_ready.set()
-                else:
-                    print("Failed to decode frame")
-            except Exception as e:
-                print(f"Error receiving video: {e}")
-                break
-                
-        self.disconnect()
+        except:
+            pass
+        finally:
+            self.disconnect()
+    
+    def _recv_exactly(self, size):
+        data = bytearray()
+        while len(data) < size:
+            packet = self.current_socket.recv(min(size - len(data), 4096))
+            if not packet:
+                return None
+            data.extend(packet)
+        return data
                 
     def get_frame(self):
-        if self.frame_ready.wait(timeout=1.0):
+        if self.frame_ready.wait(timeout=0.1):  # Reduced timeout
             self.frame_ready.clear()
             return self.current_frame.copy() if self.current_frame is not None else None
         return None
         
     def disconnect(self):
-        print("Disconnecting video client")
         self.running = False
         if self.current_socket:
             try:
