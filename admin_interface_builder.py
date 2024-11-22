@@ -1,18 +1,24 @@
 import tkinter as tk
 from tkinter import ttk
 import time
+from video_client import VideoClient
+import cv2
+from PIL import Image, ImageTk
+import threading
 
 class AdminInterfaceBuilder:
     def __init__(self, app):
         self.app = app
-        self.connected_kiosks = {}  # Stores UI elements for each kiosk
+        self.connected_kiosks = {}
         self.selected_kiosk = None
         self.stats_elements = {
             'time_label': None,
             'hints_label': None,
             'msg_entry': None,
-            'send_btn': None
+            'send_btn': None,
+            'camera_btn': None
         }
+        self.video_client = VideoClient()
         self.setup_ui()
         
     def setup_ui(self):
@@ -27,12 +33,7 @@ class AdminInterfaceBuilder:
         
         self.stats_frame = tk.LabelFrame(left_frame, text="No Room Selected", padx=10, pady=5)
         self.stats_frame.pack(fill='both', expand=True, pady=10)
-        
-    def update_stats_timer(self):
-        if self.selected_kiosk and self.selected_kiosk in self.app.kiosk_tracker.kiosk_stats:
-            self.update_stats_display(self.selected_kiosk)
-        self.app.root.after(1000, self.update_stats_timer)
-        
+
     def setup_stats_panel(self, computer_name):
         for widget in self.stats_frame.winfo_children():
             widget.destroy()
@@ -53,10 +54,73 @@ class AdminInterfaceBuilder:
         self.stats_elements['msg_entry'] = tk.Entry(hint_frame, width=40)
         self.stats_elements['msg_entry'].pack(fill='x', pady=5)
         
-        self.stats_elements['send_btn'] = tk.Button(hint_frame, text="Send",
-            command=lambda: self.send_hint(computer_name))
-        self.stats_elements['send_btn'].pack(pady=5)
+        button_frame = tk.Frame(hint_frame)
+        button_frame.pack(fill='x', pady=5)
         
+        self.stats_elements['send_btn'] = tk.Button(button_frame, text="Send",
+            command=lambda: self.send_hint(computer_name))
+        self.stats_elements['send_btn'].pack(side='left', padx=5)
+        
+        self.stats_elements['camera_btn'] = tk.Button(button_frame, text="View Camera",
+            command=lambda: self.view_camera(computer_name))
+        self.stats_elements['camera_btn'].pack(side='left', padx=5)
+
+    def view_camera(self, computer_name):
+        if computer_name in self.connected_kiosks:
+            camera_window = tk.Toplevel(self.app.root)
+            camera_window.title(f"Connecting to {computer_name} camera...")
+            camera_window.geometry("640x480")
+            
+            status_label = tk.Label(camera_window, 
+                text="Connecting to camera...",
+                font=('Arial', 14))
+            status_label.pack(expand=True)
+            
+            def connect():
+                if self.video_client.connect(computer_name):
+                    status_label.destroy()
+                    self.setup_camera_feed(camera_window)
+                else:
+                    status_label.config(
+                        text="Failed to connect to camera\nPlease check if camera is connected",
+                        fg='red')
+                    camera_window.after(3000, camera_window.destroy)
+            
+            # Run connection attempt in separate thread to prevent UI freeze
+            threading.Thread(target=connect, daemon=True).start()
+
+    def setup_camera_feed(self, camera_window):
+        camera_window.title("Camera Feed")
+        video_label = tk.Label(camera_window)
+        video_label.pack(fill='both', expand=True)
+        
+        def update_frame():
+            if camera_window.winfo_exists():
+                frame = self.video_client.get_frame()
+                if frame is not None:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frame = cv2.resize(frame, (640, 480))
+                    img = Image.fromarray(frame)
+                    imgtk = ImageTk.PhotoImage(image=img)
+                    video_label.imgtk = imgtk
+                    video_label.configure(image=imgtk)
+                camera_window.after(30, update_frame)
+            else:
+                self.video_client.disconnect()
+        
+        update_frame()
+    
+        def on_closing():
+            self.video_client.disconnect()
+            camera_window.destroy()
+            
+        camera_window.protocol("WM_DELETE_WINDOW", on_closing)
+
+    def update_stats_timer(self):
+        if self.selected_kiosk and self.selected_kiosk in self.app.kiosk_tracker.kiosk_stats:
+            self.update_stats_display(self.selected_kiosk)
+        self.app.root.after(1000, self.update_stats_timer)
+
     def add_kiosk_to_ui(self, computer_name):
         current_time = time.time()
         
@@ -127,7 +191,7 @@ class AdminInterfaceBuilder:
         
         if computer_name == self.selected_kiosk:
             self.select_kiosk(computer_name)
-            
+
     def update_kiosk_display(self, computer_name):
         if computer_name in self.connected_kiosks:
             if computer_name in self.app.kiosk_tracker.kiosk_assignments:
@@ -142,7 +206,7 @@ class AdminInterfaceBuilder:
                     )
                     if self.stats_elements['send_btn']:
                         self.stats_elements['send_btn'].config(state='normal')
-                    
+
     def mark_help_requested(self, computer_name):
         if computer_name in self.connected_kiosks:
             self.connected_kiosks[computer_name]['help_label'].config(
@@ -150,7 +214,7 @@ class AdminInterfaceBuilder:
                 fg='red',
                 font=('Arial', 14, 'bold')
             )
-            
+
     def remove_kiosk(self, computer_name):
         if computer_name in self.connected_kiosks:
             self.connected_kiosks[computer_name]['frame'].destroy()
@@ -171,7 +235,7 @@ class AdminInterfaceBuilder:
                 for widget in self.stats_frame.winfo_children():
                     widget.destroy()
                 self.stats_elements = {key: None for key in self.stats_elements}
-                
+
     def select_kiosk(self, computer_name):
         self.selected_kiosk = computer_name
         
@@ -198,7 +262,7 @@ class AdminInterfaceBuilder:
         
         self.setup_stats_panel(computer_name)
         self.update_stats_display(computer_name)
-        
+
     def update_stats_display(self, computer_name, setup=False):
         if setup or not self.stats_elements['time_label']:
             self.setup_stats_panel(computer_name)
@@ -219,7 +283,7 @@ class AdminInterfaceBuilder:
                 self.stats_elements['send_btn'].config(state='normal')
             else:
                 self.stats_elements['send_btn'].config(state='disabled')
-                
+
     def send_hint(self, computer_name):
         if not self.stats_elements['msg_entry'] or not computer_name in self.app.kiosk_tracker.kiosk_assignments:
             return
