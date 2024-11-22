@@ -38,83 +38,127 @@ class AdminInterfaceBuilder:
         for widget in self.stats_frame.winfo_children():
             widget.destroy()
         
+        # Create main container with grid layout
         stats_container = tk.Frame(self.stats_frame)
-        stats_container.pack(fill='x', expand=True, padx=10, pady=5)
+        stats_container.pack(fill='both', expand=True, padx=10, pady=5)
         
-        self.stats_elements['time_label'] = tk.Label(stats_container, justify='left')
+        # Stats labels in left column
+        labels_frame = tk.Frame(stats_container)
+        labels_frame.pack(side='left', fill='y', padx=(0,10))
+        
+        self.stats_elements['time_label'] = tk.Label(labels_frame, justify='left')
         self.stats_elements['time_label'].pack(anchor='w')
         
-        self.stats_elements['hints_label'] = tk.Label(stats_container, justify='left')
+        self.stats_elements['hints_label'] = tk.Label(labels_frame, justify='left')
         self.stats_elements['hints_label'].pack(anchor='w')
         
+        # Video feed panel
+        video_frame = tk.Frame(stats_container, bg='black', width=320, height=240)
+        video_frame.pack(side='right', padx=5, pady=5)
+        video_frame.pack_propagate(False)  # Maintain size
+        
+        self.stats_elements['video_label'] = tk.Label(video_frame, bg='black')
+        self.stats_elements['video_label'].pack(fill='both', expand=True)
+        
+        # Camera control buttons
+        camera_controls = tk.Frame(stats_container)
+        camera_controls.pack(side='right', fill='y', padx=5)
+        
+        self.stats_elements['camera_btn'] = tk.Button(
+            camera_controls, 
+            text="Start Camera",
+            command=lambda: self.toggle_camera(computer_name)
+        )
+        self.stats_elements['camera_btn'].pack(pady=5)
+        
+        # Hint controls at bottom
         hint_frame = tk.Frame(self.stats_frame)
-        hint_frame.pack(fill='x', pady=10, padx=10)
+        hint_frame.pack(fill='x', pady=10, padx=10, side='bottom')
         
         tk.Label(hint_frame, text="Custom text hint:").pack(anchor='w')
         self.stats_elements['msg_entry'] = tk.Entry(hint_frame, width=40)
         self.stats_elements['msg_entry'].pack(fill='x', pady=5)
         
-        button_frame = tk.Frame(hint_frame)
-        button_frame.pack(fill='x', pady=5)
+        self.stats_elements['send_btn'] = tk.Button(
+            hint_frame, 
+            text="Send",
+            command=lambda: self.send_hint(computer_name)
+        )
+        self.stats_elements['send_btn'].pack(pady=5)
         
-        self.stats_elements['send_btn'] = tk.Button(button_frame, text="Send",
-            command=lambda: self.send_hint(computer_name))
-        self.stats_elements['send_btn'].pack(side='left', padx=5)
-        
-        self.stats_elements['camera_btn'] = tk.Button(button_frame, text="View Camera",
-            command=lambda: self.view_camera(computer_name))
-        self.stats_elements['camera_btn'].pack(side='left', padx=5)
+        # Store the computer name for video updates
+        self.stats_elements['current_computer'] = computer_name
 
-    def view_camera(self, computer_name):
-        if computer_name in self.connected_kiosks:
-            camera_window = tk.Toplevel(self.app.root)
-            camera_window.title(f"Connecting to {computer_name} camera...")
-            camera_window.geometry("640x480")
-            
-            status_label = tk.Label(camera_window, 
-                text="Connecting to camera...",
-                font=('Arial', 14))
-            status_label.pack(expand=True)
+    def toggle_camera(self, computer_name):
+        if getattr(self, 'camera_active', False):
+            # Stop camera
+            self.video_client.disconnect()
+            self.camera_active = False
+            self.stats_elements['camera_btn'].config(text="Start Camera")
+            if 'video_label' in self.stats_elements:
+                self.stats_elements['video_label'].config(image='')
+        else:
+            # Start camera
+            self.stats_elements['camera_btn'].config(text="Connecting...")
             
             def connect():
                 if self.video_client.connect(computer_name):
-                    status_label.destroy()
-                    self.setup_camera_feed(camera_window)
+                    self.camera_active = True
+                    self.stats_elements['camera_btn'].config(text="Stop Camera")
+                    self.update_video_feed()
                 else:
-                    status_label.config(
-                        text="Failed to connect to camera\nPlease check if camera is connected",
-                        fg='red')
-                    camera_window.after(3000, camera_window.destroy)
+                    self.stats_elements['camera_btn'].config(text="Start Camera")
+                    if 'video_label' in self.stats_elements:
+                        self.stats_elements['video_label'].config(
+                            text="Camera connection failed",
+                            fg='red'
+                        )
             
-            # Run connection attempt in separate thread to prevent UI freeze
             threading.Thread(target=connect, daemon=True).start()
 
-    def setup_camera_feed(self, camera_window):
-        camera_window.title("Camera Feed")
-        video_label = tk.Label(camera_window)
-        video_label.pack(fill='both', expand=True)
-        
-        def update_frame():
-            if camera_window.winfo_exists():
+    def update_video_feed(self):
+        if getattr(self, 'camera_active', False) and 'video_label' in self.stats_elements:
+            try:
                 frame = self.video_client.get_frame()
                 if frame is not None:
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame = cv2.resize(frame, (640, 480))
+                    frame = cv2.resize(frame, (320, 240))
                     img = Image.fromarray(frame)
                     imgtk = ImageTk.PhotoImage(image=img)
-                    video_label.imgtk = imgtk
-                    video_label.configure(image=imgtk)
-                camera_window.after(30, update_frame)
-            else:
-                self.video_client.disconnect()
+                    self.stats_elements['video_label'].imgtk = imgtk
+                    self.stats_elements['video_label'].config(image=imgtk)
+            except Exception as e:
+                print(f"Error updating video feed: {e}")
+                
+        if self.camera_active:
+            self.app.root.after(30, self.update_video_feed)
+
+    def remove_kiosk(self, computer_name):
+        # Stop camera if it was active for this kiosk
+        if getattr(self, 'camera_active', False) and \
+           self.stats_elements.get('current_computer') == computer_name:
+            self.toggle_camera(computer_name)
         
-        update_frame()
-    
-        def on_closing():
-            self.video_client.disconnect()
-            camera_window.destroy()
+        # Rest of your existing remove_kiosk code...
+        if computer_name in self.connected_kiosks:
+            self.connected_kiosks[computer_name]['frame'].destroy()
+            del self.connected_kiosks[computer_name]
             
-        camera_window.protocol("WM_DELETE_WINDOW", on_closing)
+            if computer_name in self.app.kiosk_tracker.kiosk_assignments:
+                del self.app.kiosk_tracker.kiosk_assignments[computer_name]
+            if computer_name in self.app.kiosk_tracker.kiosk_stats:
+                del self.app.kiosk_tracker.kiosk_stats[computer_name]
+            if computer_name in self.app.kiosk_tracker.assigned_rooms:
+                del self.app.kiosk_tracker.assigned_rooms[computer_name]
+            if computer_name in self.app.kiosk_tracker.help_requested:
+                self.app.kiosk_tracker.help_requested.remove(computer_name)
+            
+            if self.selected_kiosk == computer_name:
+                self.selected_kiosk = None
+                self.stats_frame.configure(text="No Room Selected")
+                for widget in self.stats_frame.winfo_children():
+                    widget.destroy()
+                self.stats_elements = {key: None for key in self.stats_elements}
 
     def update_stats_timer(self):
         if self.selected_kiosk and self.selected_kiosk in self.app.kiosk_tracker.kiosk_stats:
