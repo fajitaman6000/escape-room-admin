@@ -28,7 +28,7 @@ class NetworkBroadcastHandler:
             try:
                 data, addr = self.socket.recvfrom(1024)
                 msg = json.loads(data.decode())
-                print(f"Received: {msg}")
+                print(f"Received: {msg}")  # Debug message
                 
                 if msg['type'] == 'kiosk_announce':
                     computer_name = msg['computer_name']
@@ -67,4 +67,15 @@ class NetworkBroadcastHandler:
             'room': room_number,
             'computer_name': computer_name
         }
+        self.socket.sendto(json.dumps(message).encode(), ('255.255.255.255', 12346))
+
+    def send_timer_command(self, computer_name, command, minutes=None):
+        message = {
+            'type': 'timer_command',
+            'computer_name': computer_name,
+            'command': command
+        }
+        if minutes is not None:
+            message['minutes'] = minutes
+        print(f"Sending timer command: {message}")  # Debug
         self.socket.sendto(json.dumps(message).encode(), ('255.255.255.255', 12346))

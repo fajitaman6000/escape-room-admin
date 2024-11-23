@@ -21,6 +21,9 @@ class AdminInterfaceBuilder:
         self.video_client = VideoClient()
         self.setup_ui()
         
+        # Start timer update loop using app's root
+        self.app.root.after(1000, self.update_timer_display)
+        
     def setup_ui(self):
         self.main_container = tk.Frame(self.app.root)
         self.main_container.pack(fill='both', expand=True, padx=10, pady=5)
@@ -42,20 +45,58 @@ class AdminInterfaceBuilder:
         stats_container = tk.Frame(self.stats_frame)
         stats_container.pack(fill='both', expand=True, padx=10, pady=5)
         
-        # Stats labels in left column
-        labels_frame = tk.Frame(stats_container)
-        labels_frame.pack(side='left', fill='y', padx=(0,10))
+        # Stats label for hints
+        stats_frame = tk.Frame(stats_container)
+        stats_frame.pack(side='left', fill='y', padx=(0,10))
         
-        self.stats_elements['time_label'] = tk.Label(labels_frame, justify='left')
-        self.stats_elements['time_label'].pack(anchor='w')
-        
-        self.stats_elements['hints_label'] = tk.Label(labels_frame, justify='left')
+        self.stats_elements['hints_label'] = tk.Label(stats_frame, justify='left')
         self.stats_elements['hints_label'].pack(anchor='w')
+
+        # Timer controls
+        timer_frame = tk.LabelFrame(stats_container, text="Room Timer", bg='black')
+        timer_frame.pack(side='left', padx=10, fill='y')
+
+        # Current time display
+        self.stats_elements['current_time'] = tk.Label(
+            timer_frame,
+            text="60:00",
+            font=('Arial', 24, 'bold'),
+            fg='white',
+            bg='black',
+            highlightbackground='white',
+            highlightthickness=1,
+            padx=10,
+            pady=5
+        )
+        self.stats_elements['current_time'].pack(pady=5)
+
+        timer_controls = tk.Frame(timer_frame, bg='black')
+        timer_controls.pack(fill='x', padx=5, pady=5)
+
+        self.stats_elements['timer_button'] = tk.Button(
+            timer_controls,
+            text="Start Room",
+            command=lambda: self.toggle_timer(computer_name)
+        )
+        self.stats_elements['timer_button'].pack(side='left', padx=5)
+
+        time_set_frame = tk.Frame(timer_controls, bg='black')
+        time_set_frame.pack(side='left', padx=5)
+
+        self.stats_elements['time_entry'] = tk.Entry(time_set_frame, width=3)
+        self.stats_elements['time_entry'].pack(side='left')
+        tk.Label(time_set_frame, text="min", fg='white', bg='black').pack(side='left')
+
+        tk.Button(
+            time_set_frame,
+            text="Set Time",
+            command=lambda: self.set_timer(computer_name)
+        ).pack(side='left', padx=5)
         
         # Video feed panel
         video_frame = tk.Frame(stats_container, bg='black', width=320, height=240)
         video_frame.pack(side='right', padx=5, pady=5)
-        video_frame.pack_propagate(False)  # Maintain size
+        video_frame.pack_propagate(False)
         
         self.stats_elements['video_label'] = tk.Label(video_frame, bg='black')
         self.stats_elements['video_label'].pack(fill='both', expand=True)
@@ -88,6 +129,35 @@ class AdminInterfaceBuilder:
         
         # Store the computer name for video updates
         self.stats_elements['current_computer'] = computer_name
+
+    def toggle_timer(self, computer_name):
+        is_running = self.stats_elements['timer_button'].cget('text') == "Stop Room"
+        new_text = "Start Room" if is_running else "Stop Room"
+        self.stats_elements['timer_button'].config(text=new_text)
+        
+        command = "stop" if is_running else "start"
+        self.app.network_handler.send_timer_command(computer_name, command)
+
+    def set_timer(self, computer_name):
+        try:
+            minutes = int(self.stats_elements['time_entry'].get())
+            if 0 <= minutes <= 99:  # Validate input range
+                self.app.network_handler.send_timer_command(computer_name, "set", minutes)
+        except ValueError:
+            pass  # Invalid input handling
+
+    def update_timer_display(self):
+        if self.selected_kiosk and self.selected_kiosk in self.app.kiosk_tracker.kiosk_stats:
+            stats = self.app.kiosk_tracker.kiosk_stats[self.selected_kiosk]
+            timer_time = stats.get('timer_time', 3600)
+            timer_minutes = int(timer_time // 60)
+            timer_seconds = int(timer_time % 60)
+            if 'current_time' in self.stats_elements and self.stats_elements['current_time']:
+                self.stats_elements['current_time'].config(
+                    text=f"{timer_minutes:02d}:{timer_seconds:02d}"
+                )
+        
+        self.app.root.after(1000, self.update_timer_display)
 
     def toggle_camera(self, computer_name):
         if getattr(self, 'camera_active', False):
@@ -307,21 +377,29 @@ class AdminInterfaceBuilder:
         self.setup_stats_panel(computer_name)
         self.update_stats_display(computer_name)
 
-    def update_stats_display(self, computer_name, setup=False):
-        if setup or not self.stats_elements['time_label']:
-            self.setup_stats_panel(computer_name)
-        
+    def update_stats_display(self, computer_name):
         if computer_name in self.app.kiosk_tracker.kiosk_stats:
             stats = self.app.kiosk_tracker.kiosk_stats[computer_name]
-            minutes = stats.get('room_time', 0) // 60
-            seconds = stats.get('room_time', 0) % 60
             
-            self.stats_elements['time_label'].config(
-                text=f"Time in room: {minutes}m {seconds}s"
-            )
             self.stats_elements['hints_label'].config(
                 text=f"Hints requested: {stats.get('total_hints', 0)}"
             )
+            
+            # Update timer display
+            timer_time = stats.get('timer_time', 3600)
+            timer_minutes = int(timer_time // 60)
+            timer_seconds = int(timer_time % 60)
+            if 'current_time' in self.stats_elements:
+                self.stats_elements['current_time'].config(
+                    text=f"{timer_minutes:02d}:{timer_seconds:02d}"
+                )
+            
+            # Update timer button state
+            if 'timer_button' in self.stats_elements:
+                is_running = stats.get('timer_running', False)
+                self.stats_elements['timer_button'].config(
+                    text="Stop Room" if is_running else "Start Room"
+                )
             
             if computer_name in self.app.kiosk_tracker.kiosk_assignments:
                 self.stats_elements['send_btn'].config(state='normal')

@@ -11,8 +11,22 @@ class KioskStateTracker:
     def update_kiosk_stats(self, computer_name, msg):
         self.kiosk_stats[computer_name] = {
             'total_hints': msg.get('total_hints', 0),
-            'room_time': msg.get('room_time', 0)
+            'timer_time': msg.get('timer_time', 3600),
+            'timer_running': msg.get('timer_running', False)
         }
+        
+        # Update UI if this kiosk is selected
+        if computer_name == self.app.interface_builder.selected_kiosk:
+            self.app.interface_builder.update_stats_display(computer_name)
+
+    def update_timer_state(self, computer_name, time_remaining, is_running):
+        if computer_name in self.kiosk_stats:
+            self.kiosk_stats[computer_name]['timer_time'] = time_remaining
+            self.kiosk_stats[computer_name]['timer_running'] = is_running
+            
+            # Update UI if this kiosk is selected
+            if computer_name == self.app.interface_builder.selected_kiosk:
+                self.app.interface_builder.update_stats_display(computer_name)
         
     def add_help_request(self, computer_name):
         self.help_requested.add(computer_name)
