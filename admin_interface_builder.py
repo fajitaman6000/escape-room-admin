@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 import time
 from video_client import VideoClient
-import cv2
+import cv2 # type: ignore
 from PIL import Image, ImageTk
 import threading
 
